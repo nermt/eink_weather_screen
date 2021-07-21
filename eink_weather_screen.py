@@ -2,30 +2,41 @@
 # -*- coding: utf-8 -*-
 
 import sys
+import os.path
 import configparser
 import lnetatmo
 import sched, time
 import datetime
+import logging
 from papirus import PapirusComposite
 
-INTERVAL = 60
+# Update period in seconds.
+INTERVAL = 60 
 
-# Read configuration
-config = configparser.ConfigParser()
-config.read('config.ini')
+# Path to configuration file
+CONFIG_FILE = 'config.ini'
 
-# Setup Netatmo
-authData = lnetatmo.ClientAuth( clientId = config['NETATMO']['ClientID'],
-                                clientSecret = config['NETATMO']['ClientSecret'],
-                                username = config['NETATMO']['Username'],
-                                password = config['NETATMO']['Password'])
+def print_error(message):
+    eink.Clear()
+    eink.AddText('ERROR', 10, 10, 20)
+    eink.AddText(message, 10, 35, 14)
+    eink.WriteAll()
 
-# Setup papirus
-eink = PapirusComposite(False)
+def show_modal_error(message):
+    logging.exception(message)
+    print_error(message)
 
-# Setup scheduling
-s = sched.scheduler(time.time, time.sleep)
+def show_init_error(message):
+    show_modal_error()
+    quit()
 
+def read_config():
+    _config = configparser.ConfigParser()
+    _config.read(CONFIG_FILE)
+    if (os.path.exists(CONFIG_FILE) == False):
+        raise Exception("Configuration file doesn't exist")
+    logging.info('Configuration file successfully read')
+    return _config
 
 def setup_papirus_screen():
     eink.Clear()
@@ -43,25 +54,40 @@ def update_screen(wd):
     eink.WriteAll(True)
 
 def run_and_update():
-    weatherData = lnetatmo.WeatherStationData(authData)
+    # Get new data from Netatmo
+    try:
+        weatherData = lnetatmo.WeatherStationData(authData)
+    except lnetatmo.AuthFailure:
+        show_init_error('Authentication to Netatmo failed')
+    except:
+        show_modal_error('Cannot connect to Netatmo, will try again')
+        s.enter(INTERVAL, 1, run_and_update)
+        return
 
+    # Update screen
+    try:
+        update_screen(weatherData.lastData())
+    except:
+        show_modal_error('Cannot update screen, will try again')
+        s.enter(INTERVAL, 1, run_and_update)
+        return
     
+    # Schedule next run
+    s.enter(INTERVAL, 1, run_and_update)
 
-    update_screen(weatherData.lastData())
-    print ('Current temperature indoor: %s, trend is: %s' % (weatherData.lastData()['Vardagsrum']['Temperature'],
+    logging.debug('Current temperature indoor: %s, trend is: %s' % (weatherData.lastData()['Vardagsrum']['Temperature'],
                                                             weatherData.lastData()['Vardagsrum']['temp_trend']))
 
-    print ('Current temperature outdoor: %s, trend is: %s' % (weatherData.lastData()['Utomhus']['Temperature'],
+    logging.debug('Current temperature outdoor: %s, trend is: %s' % (weatherData.lastData()['Utomhus']['Temperature'],
                                                             weatherData.lastData()['Utomhus']['temp_trend']))
 
-    print ('Battery of outdoor temperature sensor is: %d' % weatherData.lastData()['Utomhus']['battery_percent'])
+    logging.debug('Battery of outdoor temperature sensor is: %d' % weatherData.lastData()['Utomhus']['battery_percent'])
 
-    print ("It's currently raining with %s mm/h, totally %s mm over the last 24h" % (weatherData.lastData()['Regnmätare']['Rain'],
+    logging.debug("It's currently raining with %s mm/h, totally %s mm over the last 24h" % (weatherData.lastData()['Regnmätare']['Rain'],
                                                                               weatherData.lastData()['Regnmätare']['sum_rain_24']))
-
-    print ('Battery of rain sensor is: %d' % weatherData.lastData()['Regnmätare']['battery_percent'])
-    print ('Done')
-    s.enter(INTERVAL, 1, run_and_update)
+    logging.debug('Battery of rain sensor is: %d' % weatherData.lastData()['Regnmätare']['battery_percent'])
+    
+    
 
 def debug():
     weatherData = lnetatmo.WeatherStationData(authData)
@@ -71,8 +97,50 @@ def debug():
     print(datetime.datetime.fromtimestamp(ts))
     print(weatherData.lastData()['Utomhus']['Temperature'])
 
+# Initialization
+print(sys.version)
+logging.basicConfig(filename='einkscreen.log', format='%(asctime)s - %(levelname)s - %(message)s', level=logging.DEBUG)
+logging.getLogger().addHandler(logging.StreamHandler())
+logging.info('Start: Welcome to einkscreen!')
+logging.info('Starting initialization')
+
+# Setup papirus
+logging.debug('Setting up Papirus')
+try:
+    eink = PapirusComposite(False)
+except:
+    show_init_error('Papirus cannot be set up properly')
+
+# Read configuration
+logging.debug('Reading configuration file')
+try:
+    config = read_config()
+except:
+    show_init_error('Cannot read configuration file')
+
+# Setup Netatmo
+logging.debug('Setting up Netatmo client')
+try: 
+    authData = lnetatmo.ClientAuth( clientId = config['NETATMO']['ClientID'],
+                                clientSecret = config['NETATMO']['ClientSecret'],
+                                username = config['NETATMO']['Username'],
+                                password = config['NETATMO']['Password'])
+except KeyError:
+    show_init_error('Incorrect key in configuration file')
+except lnetatmo.AuthFailure:
+    show_init_error('Authentication to Netatmo failed')
+except:
+    show_init_error('Cannot connect to Netatmo')
+
+# Setup scheduling
+logging.debug('Setting up scheduler')
+s = sched.scheduler(time.time, time.sleep)
+
+logging.info('Initialization complete')
+logging.info('Starting application')
+
+# Application section
 #debug()
 setup_papirus_screen()
 run_and_update()
-s.enter(INTERVAL, 1, run_and_update)
 s.run()
