@@ -17,10 +17,13 @@ INTERVAL = 60
 CONFIG_FILE = 'config.ini'
 
 def print_error(message):
+    global screen_initialized
     eink.Clear()
     eink.AddText('ERROR', 10, 10, 20)
     eink.AddText(message, 10, 35, 14)
     eink.WriteAll()
+    screen_initialized = False
+    logging.debug('Printing error: screen_initialized is now %s' % screen_initialized)
 
 def show_modal_error(message):
     logging.exception(message)
@@ -39,21 +42,30 @@ def read_config():
     return _config
 
 def setup_papirus_screen():
+    global screen_initialized
     eink.Clear()
     eink.AddText("0°C", 10, 10, Id="outdoor_temp")
     eink.AddText("2021-06-28 22:04:30", 10, 60, 12, Id="timestamp")
     eink.WriteAll()
+    screen_initialized = True
+    logging.debug('Setting up Papirus: screen_initialized is now %s' % screen_initialized)
 
 def update_screen(wd):
+    global screen_initialized
+    logging.debug('Updating screen: screen_initialized is now %s' % screen_initialized)
+    if (screen_initialized == False):
+        setup_papirus_screen()
+
     eink.UpdateText("outdoor_temp", "%s°C" % (wd['Utomhus']['Temperature']))
 
     ts = wd['Utomhus']['When']
     date = datetime.datetime.fromtimestamp(ts)
-    print(date)
+    #print(date)
     eink.UpdateText("timestamp", date.strftime("%Y-%m-%d %H:%M:%S"))
     eink.WriteAll(True)
 
 def run_and_update():
+    logging.info('New update')
     # Get new data from Netatmo
     try:
         weatherData = lnetatmo.WeatherStationData(authData)
@@ -75,18 +87,22 @@ def run_and_update():
     # Schedule next run
     s.enter(INTERVAL, 1, run_and_update)
 
-    logging.debug('Current temperature indoor: %s, trend is: %s' % (weatherData.lastData()['Vardagsrum']['Temperature'],
+'''
+    try:
+        logging.debug('Current temperature indoor: %s, trend is: %s' % (weatherData.lastData()['Vardagsrum']['Temperature'],
                                                             weatherData.lastData()['Vardagsrum']['temp_trend']))
 
-    logging.debug('Current temperature outdoor: %s, trend is: %s' % (weatherData.lastData()['Utomhus']['Temperature'],
+        logging.debug('Current temperature outdoor: %s, trend is: %s' % (weatherData.lastData()['Utomhus']['Temperature'],
                                                             weatherData.lastData()['Utomhus']['temp_trend']))
 
-    logging.debug('Battery of outdoor temperature sensor is: %d' % weatherData.lastData()['Utomhus']['battery_percent'])
+        logging.debug('Battery of outdoor temperature sensor is: %d' % weatherData.lastData()['Utomhus']['battery_percent'])
 
-    logging.debug("It's currently raining with %s mm/h, totally %s mm over the last 24h" % (weatherData.lastData()['Regnmätare']['Rain'],
+        logging.debug("It's currently raining with %s mm/h, totally %s mm over the last 24h" % (weatherData.lastData()['Regnmätare']['Rain'],
                                                                               weatherData.lastData()['Regnmätare']['sum_rain_24']))
-    logging.debug('Battery of rain sensor is: %d' % weatherData.lastData()['Regnmätare']['battery_percent'])
-    
+        logging.debug('Battery of rain sensor is: %d' % weatherData.lastData()['Regnmätare']['battery_percent'])
+    except:
+        logging.exception('Logging failed')
+'''    
     
 
 def debug():
@@ -98,11 +114,14 @@ def debug():
     print(weatherData.lastData()['Utomhus']['Temperature'])
 
 # Initialization
+screen_initialized = False
+
 print(sys.version)
 logging.basicConfig(filename='einkscreen.log', format='%(asctime)s - %(levelname)s - %(message)s', level=logging.DEBUG)
 logging.getLogger().addHandler(logging.StreamHandler())
 logging.info('Start: Welcome to einkscreen!')
 logging.info('Starting initialization')
+logging.debug('Application init: screen_initialized is now %s' % screen_initialized)
 
 # Setup papirus
 logging.debug('Setting up Papirus')
@@ -141,6 +160,5 @@ logging.info('Starting application')
 
 # Application section
 #debug()
-setup_papirus_screen()
 run_and_update()
 s.run()
